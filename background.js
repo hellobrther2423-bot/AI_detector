@@ -34,9 +34,9 @@ async function captureAndAnalyzeScreen(tabId) {
       body: formData
     }).then(res => res.json()).catch(() => ({ status: "error" }));
 
-    // 2. Gemini Logic (With IMAGE_TYPE Classifier)
-    const geminiPrompt = `Analyze this screen.
-    1. Classify the main content: Is it a 'PHOTO' (contains people, faces, or objects to scan) or 'TEXT' (just text, UI, backgrounds, no photo to scan)?
+    // 2. Gemini Logic (With STRICTER IMAGE_TYPE Classifier)
+    const geminiPrompt = `Analyze this screen for a deepfake and scam detector.
+    1. Classify the main content: Is the primary focus a 'PHOTO' (a person, face, animal, or realistic scene meant to be checked for deepfakes)? Or is it 'TEXT' (social media feeds, documents, handwritten notes, diagrams, math problems, UI elements)?
     2. Detect scams, fake giveaways, or phishing.
     3. Identify if celebrities are AI deepfakes.
     REPLY EXACTLY IN THIS FORMAT:
@@ -44,7 +44,6 @@ async function captureAndAnalyzeScreen(tabId) {
     VERDICT: [AI or SCAM or SAFE]
     REASON: [1-sentence explanation]`;
 
-    // RESTORED YOUR ORIGINAL WORKING 2.5 ENDPOINT
     const geminiUrl = `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
     const geminiPromise = fetch(geminiUrl, {
@@ -74,9 +73,11 @@ async function captureAndAnalyzeScreen(tabId) {
 
     if (gemData.candidates?.[0]) {
       const rawText = gemData.candidates[0].content.parts[0].text.trim();
-      isTextOnly = rawText.includes("IMAGE_TYPE: TEXT");
-      // Remove the "IMAGE_TYPE:" line so the UI looks clean for the user
-      scamAnalysis = rawText.replace(/IMAGE_TYPE:\s*(PHOTO|TEXT)\n?/g, '').replace(/\n/g, "<br>");
+      // Made the check case-insensitive just to be extra safe
+      isTextOnly = rawText.toUpperCase().includes("IMAGE_TYPE: TEXT");
+      
+      // Remove the "IMAGE_TYPE:" line safely so the UI looks clean
+      scamAnalysis = rawText.replace(/IMAGE_TYPE:.*?\n/ig, '').replace(/\n/g, "<br>");
     } else if (gemData.error) {
       scamAnalysis = "API Error: " + gemData.error.message;
     }
@@ -85,13 +86,13 @@ async function captureAndAnalyzeScreen(tabId) {
     let imgVerdict = "Scan Failed"; let imgConf = "";
 
     if (isTextOnly) {
-      // IF IT'S JUST TEXT: Override the pixel engine entirely
+      // IF IT'S JUST TEXT/UI: Override the pixel engine entirely
       imgVerdict = "📝 JUST TEXT (No Photo to scan)";
       imgConf = ""; 
     } else if (sightData.status === "success") {
       // IF IT'S A PHOTO: Do the normal AI vs Camera math
       const score = sightData.type.ai_generated * 100;
-      imgVerdict = score > 50 ? "🤖 AI GENERATED PIXELS" : "📸 REAL CAMERA PIXELS";
+      imgVerdict = score > 50 ? "AI GENERATED PIXELS" : "REAL CAMERA PIXELS";
       imgConf = score > 50 ? `(${score.toFixed(1)}%)` : `(${(100 - score).toFixed(1)}%)`;
     }
 
@@ -112,7 +113,7 @@ async function analyzeText(text, tabId) {
     });
     const data = await res.json();
     const aiScore = data[0].find(i => i.label === 'Fake' || i.label === 'LABEL_0').score * 100;
-    const verdict = aiScore > 50 ? "🤖 AI TEXT" : "👤 HUMAN TEXT";
+    const verdict = aiScore > 50 ? " AI TEXT" : " HUMAN TEXT";
     const conf = aiScore > 50 ? aiScore.toFixed(1) : (100 - aiScore).toFixed(1);
     chrome.tabs.sendMessage(tabId, { action: "showTextResult", data: { verdict, conf: `(${conf}%)` } });
   } catch (e) { }
